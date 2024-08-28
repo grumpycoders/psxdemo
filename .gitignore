@@ -1,0 +1,8 @@
+PSX.Dev-README.md
+*.elf
+*.map
+*.cpe
+*.ps-exe
+*.dep
+*.o
+*.a
