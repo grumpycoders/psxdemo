@@ -1,4 +1,3 @@
-PSX.Dev-README.md
 *.elf
 *.map
 *.cpe
@@ -6,3 +5,5 @@ PSX.Dev-README.md
 *.dep
 *.o
 *.a
+*.bin
+comport.txt

@@ -3,13 +3,15 @@ TYPE = ps-exe
 
 SRCS = \
 loader.c \
-texture.tex \
+font.tex \
+splash.tex \
 ../third_party/nugget/common/crt0/crt0.s \
 ../core/core.o \
+../music/music-upload.o \
 
 LDFLAGS += -Xlinker --defsym=TLOAD_ADDR=0x80100000
 
 include ../third_party/nugget/common.mk
 
-texture.o: texture.tex
-	$(PREFIX)-objcopy -I binary --set-section-alignment .data=16 --rename-section .data=.rodata,alloc,load,readonly,data,contents -O $(FORMAT) -B mips $< $@
+%.o: %.tex
+	$(PREFIX)-objcopy -I binary --set-section-alignment .data=4 --rename-section .data=.rodata,alloc,load,readonly,data,contents -O $(FORMAT) -B mips $< $@

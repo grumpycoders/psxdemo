@@ -31,6 +31,11 @@ SOFTWARE.
 
 #include "EASTL/internal/function.h"
 #include "common/syscalls/syscalls.h"
+#include "psyqo/fragment-concept.hh"
+extern "C" {
+#include "modplayer/modplayer.h"
+}
+#include "psyqo/advancedpad.hh"
 #include "psyqo/application.hh"
 #include "psyqo/fixed-point.hh"
 #include "psyqo/font.hh"
@@ -47,7 +52,6 @@ SOFTWARE.
 #include "psyqo/primitives/rectangles.hh"
 #include "psyqo/primitives/sprites.hh"
 #include "psyqo/scene.hh"
-#include "psyqo/simplepad.hh"
 #include "psyqo/soft-math.hh"
 #include "psyqo/trigonometry.hh"
 #include "psyqo/vector.hh"
@@ -55,6 +59,8 @@ SOFTWARE.
 using namespace psyqo::fixed_point_literals;
 using namespace psyqo::timer_literals;
 using namespace psyqo::trig_literals;
+
+extern const struct MODFileFormat _binary_LittleCottonPillow_v260_hit_start;
 
 namespace {
 
@@ -66,11 +72,11 @@ constexpr psyqo::Color c_backgroundColor{{.r = 0x34, .g = 0x58, .b = 0x6c}};
 // This is for debugging purposes only.
 template <typename T>
 void printVec(const T& v) {
-    ramsyscall_printf("x: ");
+    syscall_puts("x: ");
     v.x.print([](char c) { syscall_putchar(c); });
-    ramsyscall_printf(", y: ");
+    syscall_puts(", y: ");
     v.y.print([](char c) { syscall_putchar(c); });
-    ramsyscall_printf(", z: ");
+    syscall_puts(", z: ");
     v.z.print([](char c) { syscall_putchar(c); });
     syscall_putchar('\n');
 }
@@ -82,7 +88,8 @@ class TorusDemo final : public psyqo::Application {
   public:
     psyqo::Font<2> m_font;
     psyqo::Trig<> m_trig;
-    psyqo::SimplePad m_input;
+    psyqo::AdvancedPad m_input;
+    unsigned m_musicTimer;
 };
 
 TorusDemo torusDemo;
@@ -146,10 +153,10 @@ struct TorusTemplate {
             psyqo::GTE::write<psyqo::GTE::Register::IR3, psyqo::GTE::Safe>(reinterpret_cast<uint32_t*>(&t.z.value));
             psyqo::GTE::Kernels::cp();
             // The result is stored in the LV register, so first we simply read it.
-            psyqo::GTE::read<psyqo::GTE::PseudoRegister::LV>(&cp);
+            psyqo::GTE::read<psyqo::GTE::PseudoRegister::LV>(cp);
             // Then we square LV to get the square of the length of the normal.
             psyqo::GTE::Kernels::sqr();
-            psyqo::GTE::read<psyqo::GTE::PseudoRegister::LV>(&sq);
+            psyqo::GTE::read<psyqo::GTE::PseudoRegister::LV>(sq);
             // We still need to add the three components of the square.
             auto square = sq.x + sq.y + sq.z;
             // Finally, we compute the square root of the square of the length of the normal.
@@ -323,12 +330,12 @@ class TorusScene final : public psyqo::Scene {
         // The generator finished, our scene starts. We set the proper context.
         m_lastFrameCounter = gpu().getFrameCount();
         m_sequenceStartTime = gpu().now();
-        torusDemo.m_input.setOnEvent([this](const psyqo::SimplePad::Event& event) {
-            if (event.type != psyqo::SimplePad::Event::ButtonReleased) return;
-            if (event.button == psyqo::SimplePad::Button::Triangle) {
+        torusDemo.m_input.setOnEvent([this](const psyqo::AdvancedPad::Event& event) {
+            if (event.type != psyqo::AdvancedPad::Event::ButtonReleased) return;
+            if (event.button == psyqo::AdvancedPad::Button::Triangle) {
                 m_lutIndex = (m_lutIndex + 1) % 3;
             }
-            if (event.button == psyqo::SimplePad::Button::Cross) {
+            if (event.button == psyqo::AdvancedPad::Button::Cross) {
                 m_lutInverted = !m_lutInverted;
             }
             const psyqo::Color* lut = nullptr;
@@ -448,12 +455,12 @@ class TorusScene final : public psyqo::Scene {
         constexpr psyqo::Angle rippleIncrement = 1.0_pi / Count;
         psyqo::Angle ripple = rippleIncrement * torusIndex;
         auto& torus = m_tori[torusIndex];
-        ramsyscall_printf("Generating torus %u\n", torusIndex);
+        // ramsyscall_printf("Generating torus %u\n", torusIndex);
 
         auto amplitude = torusDemo.m_trig.sin(ripple) * 0.6_fp;
         unsigned index = 0;
         for (psyqo::Angle outside = 0; outside < 2.0_pi; outside += incrementOutside) {
-            auto rot = psyqo::SoftMath::generateRotationMatrix33(outside, psyqo::SoftMath::Axis::Z, &torusDemo.m_trig);
+            auto rot = psyqo::SoftMath::generateRotationMatrix33(outside, psyqo::SoftMath::Axis::Z, torusDemo.m_trig);
             psyqo::GTE::writeUnsafe<psyqo::GTE::PseudoRegister::Rotation>(rot);
             psyqo::FixedPoint<> rippleAmplitude = amplitude * torusDemo.m_trig.sin(outside * 5 + ripple * 8) + 1.5_fp;
             for (psyqo::Angle inside = 0; inside < 2.0_pi; inside += incrementInside) {
@@ -548,12 +555,20 @@ TorusScene::SequenceItem TorusScene::sequence[] = {
     {3.0_s, ""},
     {2.0_s, "Yep."},
     {2.0_s, "Yep. That's projected shadows."},
-    {2.0_s, ""},
+    {5.0_s, ""},
     {3.0_s, "By the way..."},
     {2.0_s, "... it's interactive..."},
     {2.0_s, ""},
     {2.0_s, "Try pressing buttons."},
     {4.0_s, ""},
+    {0.5_s, "Credits."},
+    {0.5_s, "Credits.."},
+    {4.0_s, "Credits..."},
+    {4.0_s, "Torus Code & Design: Pixel"},
+    {4.0_s, "Music: Sicklebrick"},
+    {4.0_s, "Splash screen: Smidgens"},
+    {4.0_s, "Fonts: Zingot Games"},
+    {5.0_s, ""},
     {2.0_s, "And that's it."},
     {2.0_s, ""},
     {3.0_s, "Thanks for watching."},
@@ -581,25 +596,43 @@ class TorusGeneratorScene final : public psyqo::Scene {
     void frame() override;
     unsigned m_generationFrame = 0;
     uint32_t m_startTimestamp = 0;
+    struct Splash {
+        psyqo::Prim::TPage tpage1;
+        psyqo::Prim::Sprite splash1;
+        psyqo::Prim::TPage tpage2;
+        psyqo::Prim::Sprite splash2;
+    };
+    psyqo::Fragments::SimpleFragment<Splash> m_splashFragment;
     // Our generator scene won't try to double buffer, so we only need one set of primitives.
     struct ProgressBar {
         psyqo::Prim::PolyLine<4> line;
         psyqo::Prim::Rectangle rect;
-    } m_progressBar;
+    };
+    psyqo::Fragments::SimpleFragment<ProgressBar> m_progressBarFragment;
     uint8_t computePixel(uint8_t x, uint8_t y);
 
   public:
     TorusGeneratorScene() {
         // Preparing the progress bar drawing calls.
-        m_progressBar.line.setColor({{.r = 255, .g = 255, .b = 255}});
-        m_progressBar.line.points[0] = {{.x = 30, .y = 118}};
-        m_progressBar.line.points[1] = {{.x = 30, .y = 138}};
-        m_progressBar.line.points[2] = {{.x = 290, .y = 138}};
-        m_progressBar.line.points[3] = {{.x = 290, .y = 118}};
-        m_progressBar.line.points[4] = {{.x = 30, .y = 118}};
-        m_progressBar.rect.position = {{.x = 32, .y = 120}};
-        m_progressBar.rect.size = {{.w = 0, .h = 17}};
-        m_progressBar.rect.setColor({{.r = 255, .g = 255, .b = 255}});
+        m_progressBarFragment.primitive.line.setColor({{.r = 255, .g = 255, .b = 255}});
+        m_progressBarFragment.primitive.line.points[0] = {{.x = 30, .y = 118}};
+        m_progressBarFragment.primitive.line.points[1] = {{.x = 30, .y = 138}};
+        m_progressBarFragment.primitive.line.points[2] = {{.x = 290, .y = 138}};
+        m_progressBarFragment.primitive.line.points[3] = {{.x = 290, .y = 118}};
+        m_progressBarFragment.primitive.line.points[4] = {{.x = 30, .y = 118}};
+        m_progressBarFragment.primitive.rect.position = {{.x = 32, .y = 120}};
+        m_progressBarFragment.primitive.rect.size = {{.w = 0, .h = 17}};
+        m_progressBarFragment.primitive.rect.setColor({{.r = 255, .g = 255, .b = 255}});
+        m_splashFragment.primitive.tpage1.attr.setPageX(8).setPageY(1).enableDisplayArea().setDithering(false).set(
+            psyqo::Prim::TPageAttr::Tex16Bits);
+        m_splashFragment.primitive.splash1.setColor({{.r = 128, .g = 128, .b = 128}});
+        m_splashFragment.primitive.splash1.position = {{.x = 0, .y = 0}};
+        m_splashFragment.primitive.splash1.size = {{.w = 256, .h = 240}};
+        m_splashFragment.primitive.tpage2.attr.setPageX(12).setPageY(1).enableDisplayArea().setDithering(false).set(
+            psyqo::Prim::TPageAttr::Tex16Bits);
+        m_splashFragment.primitive.splash2.setColor({{.r = 128, .g = 128, .b = 128}});
+        m_splashFragment.primitive.splash2.position = {{.x = 256, .y = 0}};
+        m_splashFragment.primitive.splash2.size = {{.w = 64, .h = 240}};
     }
 };
 
@@ -615,11 +648,16 @@ void TorusDemo::prepare() {
         .set(psyqo::GPU::Interlace::PROGRESSIVE)
         .set(psyqo::GPU::MiscSetting::KEEP_VRAM);
     gpu().initialize(config);
+    m_input.initialize();
 }
 
 void TorusDemo::createScene() {
+    MOD_LoadEx(&_binary_LittleCottonPillow_v260_hit_start, NULL);
+    m_musicTimer = gpu().armPeriodicTimer(MOD_hblanks * psyqo::GPU::US_PER_HBLANK, [this](uint32_t) {
+        MOD_Poll();
+        gpu().changeTimerPeriod(m_musicTimer, MOD_hblanks * psyqo::GPU::US_PER_HBLANK);
+    });
     m_font.uploadSystemFont(gpu());
-    m_input.initialize();
     pushScene(&torusGeneratorScene);
 }
 
@@ -674,11 +712,12 @@ void TorusGeneratorScene::frame() {
         psyqo::Prim::FlushCache fc;
         gpu().sendPrimitive(fc);
         pushScene(&torusScene);
+        return;
     }
     m_generationFrame++;
     uint32_t elapsed = (gpu().now() - m_startTimestamp) / 1000;
     int32_t eta = (elapsed * eastl::max(TorusScene::Count, size_t(256))) / m_generationFrame - elapsed;
-    gpu().clear(c_backgroundColor);
+    gpu().sendFragment(m_splashFragment);
     if (m_generationFrame < 128) {
         torusDemo.m_font.print(gpu(), "Generating animation...", {{.x = 60, .y = 80}},
                                {{.r = 255, .g = 255, .b = 255}});
@@ -692,8 +731,8 @@ void TorusGeneratorScene::frame() {
     torusDemo.m_font.printf(gpu(), {{.x = 60, .y = 160}}, {{.r = 255, .g = 255, .b = 255}}, "Elapsed: %us, ETA: %us",
                             elapsed / 1000, eastl::max(eta, int32_t(0)) / 1000);
     // This is the only dynamic part of the progress bar, so that's the only write to our draw calls we're doing.
-    m_progressBar.rect.size.w = int16_t(m_generationFrame);
-    gpu().sendPrimitive(m_progressBar);
+    m_progressBarFragment.primitive.rect.size.w = int16_t(m_generationFrame);
+    gpu().sendFragment(m_progressBarFragment);
 }
 
 void TorusScene::checkSequence(uint32_t currentTime) {
@@ -772,11 +811,11 @@ void TorusScene::frame() {
     // These matrix multiplications are done in software, and they're not particularly fast, but it's done only once per
     // frame, so it's not really a problem. The computation could be accelerated using the GTE however, but we're not
     // starving for CPU at this point, so it's all good.
-    auto transform = psyqo::SoftMath::generateRotationMatrix33(m_angleX, psyqo::SoftMath::Axis::X, &torusDemo.m_trig);
-    auto rot = psyqo::SoftMath::generateRotationMatrix33(m_angleY, psyqo::SoftMath::Axis::Y, &torusDemo.m_trig);
-    psyqo::SoftMath::multiplyMatrix33(&transform, &rot, &transform);
-    psyqo::SoftMath::generateRotationMatrix33(&rot, m_angleZ, psyqo::SoftMath::Axis::Z, &torusDemo.m_trig);
-    psyqo::SoftMath::multiplyMatrix33(&transform, &rot, &transform);
+    auto transform = psyqo::SoftMath::generateRotationMatrix33(m_angleX, psyqo::SoftMath::Axis::X, torusDemo.m_trig);
+    auto rot = psyqo::SoftMath::generateRotationMatrix33(m_angleY, psyqo::SoftMath::Axis::Y, torusDemo.m_trig);
+    psyqo::SoftMath::multiplyMatrix33(transform, rot, &transform);
+    psyqo::SoftMath::generateRotationMatrix33(&rot, m_angleZ, psyqo::SoftMath::Axis::Z, torusDemo.m_trig);
+    psyqo::SoftMath::multiplyMatrix33(transform, rot, &transform);
     psyqo::GTE::writeUnsafe<psyqo::GTE::PseudoRegister::Rotation>(transform);
 
     // All these will be reused multiple times over the course of the frame.
@@ -876,8 +915,8 @@ void TorusScene::frame() {
     // shadow texture, and we multiply it by a 90 degree rotation around the X axis, as the platform is going to be
     // rendered visually underneath the torus. This will make the appearance that everything has been projected
     // properly, but it's all just a visual trick.
-    psyqo::SoftMath::generateRotationMatrix33(&rot, 0.5_pi, psyqo::SoftMath::Axis::X, &torusDemo.m_trig);
-    psyqo::SoftMath::multiplyMatrix33(&transform, &rot, &transform);
+    psyqo::SoftMath::generateRotationMatrix33(&rot, 0.5_pi, psyqo::SoftMath::Axis::X, torusDemo.m_trig);
+    psyqo::SoftMath::multiplyMatrix33(transform, rot, &transform);
     psyqo::GTE::writeUnsafe<psyqo::GTE::PseudoRegister::Rotation>(transform);
 
     // At this point, our background DMA chain has most likely finished. At some point, we want to send
@@ -917,13 +956,13 @@ void TorusScene::frame() {
         psyqo::Vec3 v1 = m_tori[animationIndex].normals[i + 1];
         psyqo::Vec3 v2 = m_tori[animationIndex].normals[i + 2];
         psyqo::GTE::Kernels::rtpt();
-        auto sz = -psyqo::SoftMath::matrixVecMul3z(&transform, &v0);
+        auto sz = -psyqo::SoftMath::matrixVecMul3z(transform, v0);
         int32_t z = sz.integer<256>() - 1;
         zNormal[i + 0] = eastl::clamp(z, int32_t(0), int32_t(255));
-        sz = -psyqo::SoftMath::matrixVecMul3z(&transform, &v1);
+        sz = -psyqo::SoftMath::matrixVecMul3z(transform, v1);
         z = sz.integer<256>() - 1;
         zNormal[i + 1] = eastl::clamp(z, int32_t(0), int32_t(255));
-        sz = -psyqo::SoftMath::matrixVecMul3z(&transform, &v2);
+        sz = -psyqo::SoftMath::matrixVecMul3z(transform, v2);
         z = sz.integer<256>() - 1;
         zNormal[i + 2] = eastl::clamp(z, int32_t(0), int32_t(255));
         psyqo::GTE::read<psyqo::GTE::Register::SXY0>(&projected[i + 0].packed);
@@ -937,7 +976,7 @@ void TorusScene::frame() {
         psyqo::GTE::writeUnsafe<psyqo::GTE::PseudoRegister::V0>(m_tori[animationIndex].vertices[i]);
         psyqo::Vec3 v = m_tori[animationIndex].normals[i];
         psyqo::GTE::Kernels::rtps();
-        auto sz = -psyqo::SoftMath::matrixVecMul3z(&transform, &v);
+        auto sz = -psyqo::SoftMath::matrixVecMul3z(transform, v);
         int32_t z = sz.integer<256>() - 1;
         zNormal[i] = eastl::clamp(z, int32_t(0), int32_t(255));
         psyqo::GTE::read<psyqo::GTE::Register::SXY2>(&projected[i].packed);
@@ -1038,4 +1077,8 @@ void TorusScene::frame() {
     }
 }
 
-int main() { return torusDemo.run(); }
+int main() {
+    *((volatile uint8_t*)0x23) = 0;
+    psyqo::Kernel::takeOverKernel();
+    return torusDemo.run();
+}
